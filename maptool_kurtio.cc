@@ -40,6 +40,67 @@ class MapFilterFn_g5 : public clipper::MapFilterFn_base {
 };
 
 
+/*  ----------------------------------------------------------------------- */
+/*           Map kurtosis B factor optimization                             */
+/*  ----------------------------------------------------------------------- */
+/*
+float optimal_B_kurtosis(int imol) {
+// 
+// CALCULATES THE OPTIMAL BFACTOR:
+// PERFORMS A GOLDEN SECTION SEARCH ON
+// THE KURTOSIS OF THE ENTIRE SUPPLIED MAP
+// 
+	float sharpening_limit = graphics_info_t::map_sharpening_scale_limit;	
+	float golden_ratio = (sqrt(5.0)-1.0)*0.5;
+
+	float kurtosis=0.0, B_optimal=0.0;
+	float a =-1.0*sharpening_limit, b=1.0*sharpening_limit, TOL=1E-2;
+	float fc= 0.0, fd=0.0;
+	float c = b-golden_ratio*(b-a);
+	float d = a+golden_ratio*(b-a);
+
+	if (is_valid_map_molecule(imol)) {
+           if (graphics_info_t::molecules[imol].sharpen_b_factor_kurtosis_optimised() < -999.0) {
+		while( d-c > TOL )
+		{
+			graphics_info_t::molecules[imol].sharpen(c, false, 0);
+			map_statistics_t ms1 	= graphics_info_t::molecules[imol].map_statistics();
+			fc			= ms1.kurtosis;
+			graphics_info_t::molecules[imol].sharpen(c-1, false, 0);
+			map_statistics_t ms10 	= graphics_info_t::molecules[imol].map_statistics();
+			fc *= (fc<ms10.kurtosis)?(1.0):(-1.0);
+
+			graphics_info_t::molecules[imol].sharpen(d, false, 0);
+			map_statistics_t ms2 	= graphics_info_t::molecules[imol].map_statistics();
+			fd			= ms2.kurtosis;
+			graphics_info_t::molecules[imol].sharpen(d+1, false, 0);
+			map_statistics_t ms21 	= graphics_info_t::molecules[imol].map_statistics();
+			fd *= (fd>ms21.kurtosis)?(1.0):(-1.0);
+
+			if( fc > fd ) { // FIND MAXIMUM
+				b = d; d = c;
+				c = b - golden_ratio*( b - a );
+			} else {
+				a = c; c = d;
+				d = a + golden_ratio*( b - a );
+			}
+		}
+		B_optimal	= (c+d)*0.5;
+		float dB	= (d-c)*0.5;
+
+		graphics_info_t::molecules[imol].sharpen(B_optimal, false, 0);
+		map_statistics_t ms11 	= graphics_info_t::molecules[imol].map_statistics();
+		graphics_info_t::molecules[imol].set_sharpen_b_factor_kurtosis_optimised(B_optimal);
+           } else {
+              B_optimal = graphics_info_t::molecules[imol].sharpen_b_factor_kurtosis_optimised();
+	  }
+	}
+
+	return B_optimal;
+}
+*/
+
+
 void SplitFilename (const std::string& str)
 {
   std::cout << "Splitting: " << str << '\n';
