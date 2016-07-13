@@ -29,7 +29,7 @@
 // export LD_LIBRARY_PATH=/usr/local/lib && g++ main.cc -lclipper-core -lclipper-contrib -lclipper-ccp4 -lclipper-phs -o richmap
 //-----------------------------------------
 //	COMPILE:
-// export LD_LIBRARY_PATH=/home/richard/autobuild/Linux-Carmack-pre-release-gtk2-noguile/lib && g++ map_tool2.cc -lclipper-core -lclipper-contrib -lclipper-ccp4 -lclipper-phs -lgsl -lblas -o richmap
+// export LD_LIBRARY_PATH=/home/richard/autobuild/Linux-Carmack-pre-release-gtk2-noguile/lib && g++ maptool.cc -lclipper-core -lclipper-contrib -lclipper-ccp4 -lclipper-phs -lgsl -lblas -o richmap
 //-----------------------------------------
 
 class MapFilterFn_g5 : public clipper::MapFilterFn_base {
@@ -52,7 +52,7 @@ std::string SplitString (const std::string& str,const std::string& split_str, in
 {
 	std::size_t found = str.find_last_of(split_str);
 	std::string retstr;
-	switch(i){
+	switch( i ) {
 		case 1:
 			retstr = str.substr(found+1);
 			break;
@@ -221,6 +221,72 @@ float calc_kurtosis(clipper::Xmap<float> base_map, int verbose) {
 	cookie   = nom/nam/nam*calc_fs[2];
 	return cookie;
 }
+
+float calc_skewness(clipper::Xmap<float> base_map, int verbose) {
+//
+//	DOING MAP STATISTICS, RETURNS SKEWNESS	
+//
+	clipper::Xmap_base::Map_reference_index midx=base_map.first();
+	float calc_fs[5]={0.0, 0.0, 0.0, 0.0, 0.0}, e_m, e_s2;
+	for(midx = base_map.first(); !midx.last(); midx.next() ) {
+		calc_fs[0] += base_map[midx] ;
+		calc_fs[1] += base_map[midx]*base_map[midx] ;
+		calc_fs[2] += 1.0;
+	}
+	e_m 		= calc_fs[0]/calc_fs[2];
+	calc_fs[3]	= calc_fs[1]/calc_fs[2];
+	e_s2		= calc_fs[3]-e_m;
+	if(verbose)
+		std::cout << "STAT::" << e_m << std::endl;
+	double cookie = 0.0, nom = 0.0, nam = 0.0;
+	for(midx = base_map.first(); !midx.last(); midx.next() ) {
+		nom += (base_map[midx]-e_m)*(base_map[midx]-e_m)*(base_map[midx]-e_m);
+		nam += (base_map[midx]-e_m)*(base_map[midx]-e_m);
+	}
+
+	if(verbose>1)
+		std::cout << "STAT:: " << nom << ", " << nam << ", " << calc_fs[2] << std::endl;
+	double	om	= sqrt(nam);
+	double	namnam	= calc_fs[2];
+	
+	cookie   = nom/nam/om*namnam;
+	return cookie;
+}
+
+
+float calc_standardized_moment(clipper::Xmap<float> base_map, int imom , int verbose) {
+//
+//	DOING MAP STATISTICS, RETURNS STANDARDIZED MOMENT
+//
+	clipper::Xmap_base::Map_reference_index midx=base_map.first();
+	float calc_fs[5]={0.0, 0.0, 0.0, 0.0, 0.0}, e_m, e_s2;
+	for( midx = base_map.first(); !midx.last(); midx.next() ) {
+		calc_fs[0] += base_map[midx] ;
+		calc_fs[1] += base_map[midx]*base_map[midx] ;
+		calc_fs[2] += 1.0;
+	}
+	e_m 		= calc_fs[0]/calc_fs[2];
+	calc_fs[3]	= calc_fs[1]/calc_fs[2];
+	e_s2		= calc_fs[3]-e_m;
+	if(verbose)
+		std::cout << "STAT::" << e_m << std::endl;
+	double cookie = 0.0, nom = 0.0, nam = 0.0;
+	for( midx = base_map.first() ; !midx.last() ; midx.next() ) {
+		double nmomv = (base_map[midx]-e_m)*(base_map[midx]-e_m);
+		for( int im=0 ; im<imom ; im++ )
+			nmomv*=(base_map[midx]-e_m);
+		nom +=  nmomv;
+		nam += (base_map[midx]-e_m)*(base_map[midx]-e_m);
+	}
+	if(verbose>1)
+		std::cout << "STAT:: " << nom << ", " << nam << ", " << calc_fs[2] << std::endl;
+	double	namnam	= calc_fs[2];	
+	nam = pow(nam,imom+2.0);
+	double	om	= sqrt(nam);
+	cookie   	= nom/om*namnam;
+	return cookie;
+}
+
 
 float calc_map_mean( clipper::Xmap<float> base_map , int bAbs) {
 	float nom=0.0, nam=0.0;
@@ -514,6 +580,102 @@ clipper::Xmap<float> quench_map( clipper::Xmap<float> map0 ) {
 	return map3;
 }
 
+clipper::Xmap<float> degaus( clipper::Xmap<float> I_in, float s1, float s2 , bool full){
+
+	clipper::Xmap<float> I_out(I_in);
+
+	float s1_2 	= s1*s1; 
+	float s2_2 	= s2*s2;
+	float x 	= 0.0;
+
+	if(full){ // THIS METHOD IS REALLY BAD SINCE IT LOOPS OVER EVERYTHING
+		for( clipper::Xmap<float>::Map_reference_index iidx = I_in.first(); !iidx.last(); iidx.next() ) {
+			float val		= 0.0;
+			float cnt		= 0.0;
+			float Ir		= I_in[iidx];
+			clipper::Coord_grid c_r	= iidx.coord();
+			for( clipper::Xmap<float>::Map_reference_index jidx = I_in.first(); !jidx.last(); jidx.next() ) {
+				float Ix		= I_in[jidx];
+				clipper::Coord_grid c_x	= jidx.coord();
+				clipper::Coord_grid c_d; 
+				c_d 		 = c_r - c_x;
+				float du2 	 = c_d.u()*c_d.u() + c_d.v()*c_d.v() + c_d.w()*c_d.w();
+				float dI2 	 = (Ir-Ix)*(Ir-Ix);
+				float w		 = exp(-0.5*du2/s1_2)*exp(-0.5*dI2/s2_2);
+				val		+= w*Ix;
+				cnt		+= w;
+			}
+			I_out[iidx]=val/cnt;
+		}
+	}else{
+		clipper::Skeleton_basic::Neighbours neighb(I_in, 0.1, s1*4.0 );
+		int 	n_neighbs	= neighb.size();
+		float	f_neig		= neighb.size();	
+		float	Ir, Ix; 				
+		float   val		= 0.0;
+		clipper::Xmap_base::Map_reference_index	ix;
+		clipper::Coord_grid 			c_r,c_x,c_d;
+
+		for ( ix = I_in.first(); !ix.last(); ix.next() ) {
+			Ir	 = I_in[ix];
+			c_r	 = ix.coord();
+			val	 = 0.0;
+			float ws	= 0.0;
+			for (int i = 0 ; i<n_neighbs ; i++ ) {
+				c_x	 	 = c_r + neighb[i];
+				c_d	 	 = neighb[i];
+				Ix  	 	 = I_in.get_data(c_x);
+				float du2 	 = c_d.u()*c_d.u() + c_d.v()*c_d.v() + c_d.w()*c_d.w();
+				float dI2 	 = (Ir-Ix)*(Ir-Ix);
+				float w		 = exp(-0.5*du2/s1_2)*exp(-0.5*dI2/s2_2);
+				val		+= w*Ix;
+				ws		+= w;
+				
+			}
+			I_out[ix] = val/ws; 
+		}
+	}
+
+	return I_out;
+}
+
+
+clipper::Xmap<float> 
+degaus( clipper::Xmap<float> I_in, float s1, float s2 ){
+	clipper::Xmap<float> I_out(I_in);
+
+	float s1_2 	= s1*s1; 
+	float s2_2 	= s2*s2;
+	float x 	= 0.0;
+
+	clipper::Skeleton_basic::Neighbours neighb(I_in, 0.1, s1*4.0 );
+	int 	n_neighbs	= neighb.size();
+	float	f_neig		= neighb.size();	
+	float	Ir, Ix; 				
+	float   val		= 0.0;
+	clipper::Xmap_base::Map_reference_index	ix;
+	clipper::Coord_grid 	c_r,c_x,c_d;
+	for ( ix = I_in.first(); !ix.last(); ix.next() ) {
+		Ir		= I_in[ix];
+		c_r		= ix.coord();
+		val	 	= 0.0;
+		float ws	= 0.0;
+		for (int i = 0 ; i<n_neighbs ; i++ ) {
+			c_x	 	 = c_r + neighb[i];
+			c_d	 	 = neighb[i];
+			Ix  	 	 = I_in.get_data(c_x);
+			float du2 	 = c_d.u()*c_d.u() + c_d.v()*c_d.v() + c_d.w()*c_d.w();
+			float dI2 	 = (Ir-Ix)*(Ir-Ix);
+			float w		 = exp(-0.5*du2/s1_2)*exp(-0.5*dI2/s2_2);
+			val		+= w*Ix;
+			ws		+= w;			
+		}
+		I_out[ix] = val/ws; 
+	}
+
+	return I_out;
+}
+
 clipper::Xmap<float> quench_map_with_cdf( clipper::Xmap<float> map0 ) {
 	clipper::Xmap<float> map3( map0 );
 
@@ -557,7 +719,9 @@ sharpen ( float b_factor, clipper::HKL_data< clipper::datatypes::F_phi<float> > 
 	int n_data = 0;
 	int n_inf  = 0;
 
-	clipper::Grid_sampling gs( original_fphis.spacegroup(), original_fphis.cell(), original_fphis.resolution(), 1.5 );
+	clipper::Grid_sampling gs(	original_fphis.spacegroup(), 
+					original_fphis.cell(), 
+					original_fphis.resolution(), 1.5 );
 	clipper::Xmap<float> xmap;	  					// NULL MAP
 	xmap.init ( original_fphis.spacegroup(), original_fphis.cell(), gs ); 	// INITIALIZE MAP
 
@@ -585,6 +749,95 @@ sharpen ( float b_factor, clipper::HKL_data< clipper::datatypes::F_phi<float> > 
 
 }
 
+clipper::Xmap<float>
+patterson( clipper::HKL_data< clipper::datatypes::F_phi<float> > original_fphis ) {
+	int n_inf=0,n_data=0,n_own=0;
+	clipper::Grid_sampling gs( original_fphis.spacegroup(), original_fphis.cell(), original_fphis.resolution(), 1.5 );
+	clipper::Xmap<float> xmap;	  					// NULL MAP
+	xmap.init ( original_fphis.spacegroup(), original_fphis.cell(), gs ); 	// INITIALIZE MAP
+	clipper::HKL_info::HKL_reference_index hri;
+	clipper::HKL_data< clipper::datatypes::F_phi<float> >	fphis(	original_fphis.spacegroup(),
+									original_fphis.cell(),
+									original_fphis.hkl_sampling()	);
+	fphis = original_fphis;
+	for ( hri = fphis.first(); !hri.last(); hri.next() ) {
+		n_data++;
+		float f 	= fphis[hri].f();
+		float irs 	= hri.invresolsq();
+		if ( !clipper::Util::is_nan(f) ) {
+			std::cout	<< "  \t  " << f << "  \t  " << irs 
+					<< "\t" << hri.hkl().h() << "\t"<< hri.hkl().k() << "\t"<< hri.hkl().l() 
+					<< std::endl ;n_own++;
+		}
+		if (! clipper::Util::is_nan(f)) {
+			fphis[hri].f() = f*f; 
+			fphis[hri].phi() = 0.0; 
+		}
+		else {
+			n_inf++;
+		}
+	}
+	if( n_inf == n_data )
+		std::cout << "INFO::ERROR" << std::endl; 
+	std::cout << "INFO::COUNT\t" << n_own << std::endl; 
+	xmap.fft_from(fphis);
+	return xmap;
+}
+
+
+clipper::Xmap<float>
+bijvoet_diff( clipper::HKL_data< clipper::datatypes::F_phi<float> > original_fphis ) {
+	int n_inf=0,n_data=0,n_own=0;
+	clipper::Grid_sampling gs( original_fphis.spacegroup(), original_fphis.cell(), original_fphis.resolution(), 1.5 );
+	clipper::Xmap<float> xmap;	  					// NULL MAP
+	xmap.init ( original_fphis.spacegroup(), original_fphis.cell(), gs ); 	// INITIALIZE MAP
+	std::cout << "INFO GOT HERE! " << std::endl;
+	clipper::HKL_info::HKL_reference_index hri;
+	clipper::HKL_data< clipper::datatypes::F_phi<float> >	fphis(	original_fphis.spacegroup(),
+									original_fphis.cell(),
+									original_fphis.hkl_sampling()	);
+	fphis = original_fphis;
+	for ( hri = fphis.first(); !hri.last(); hri.next() ) {
+		n_data++;
+		float f 	= fphis[hri].f();
+		float irs 	= hri.invresolsq();
+		if ( !clipper::Util::is_nan(f) ) {
+//
+//			std::cout	<< "  \t  " << f << "  \t  " << irs 
+//					<< "\t" << hri.hkl().h() << "\t"<< hri.hkl().k() << "\t"<< hri.hkl().l() 
+//					<< std::endl ;n_own++;
+//
+			clipper::HKL rfl(hri.hkl().h()*-1,hri.hkl().k()*-1,hri.hkl().l()*-1);
+			clipper::HKL mno;
+			int cidx;
+			//cidx	= hri.base_hkl_info().index_of(rfl);
+			int sym=0; bool friedel=false; 
+			mno	= hri.base_hkl_info().find_sym(rfl,sym,friedel); //index_of(rfl); 
+			cidx	= hri.base_hkl_info().index_of(mno);
+			if( cidx<0 ) {
+				// std::cout << " " << cidx << std::endl;
+				continue;
+			}
+			clipper::HKL_info::HKL_reference_index hri_m( hri.base_hkl_info(), cidx );
+			float df	= fphis[hri_m].f();
+			std::cout << "INFO \t " << df << std::endl;
+			df*=df;f*=f;
+			fphis[hri].f() = f-df; 
+			fphis[hri].phi() = 0.0; 
+		}
+		else {
+			n_inf++;
+		}
+	}
+	if( n_inf == n_data )
+		std::cout << "INFO::ERROR" << std::endl; 
+	std::cout << "INFO::COUNT\t" << n_own << std::endl; 
+	xmap.fft_from(fphis);
+	std::cout << "INFO::DONE HERE" << std::endl;
+ 
+	return xmap;
+}
+
 
 float optimal_B_kurtosis( clipper::HKL_data< clipper::datatypes::F_phi<float> > original_fphis ) {
 // 
@@ -594,17 +847,28 @@ float optimal_B_kurtosis( clipper::HKL_data< clipper::datatypes::F_phi<float> > 
 // 
 	float sharpening_limit = 100;	
 	float kurtosis=0.0, B_optimal=0.0;
-	float a =-1.0*sharpening_limit, b=1.0*sharpening_limit, TOL=1E-2;
-	float fc= 0.0, fd=0.0, golden_ratio = (sqrt(5.0)-1.0)*0.5;
+	float a =-1.0*sharpening_limit, b=1.0*sharpening_limit, TOL=1E-2, TOLB=40E0;
+	float fa= 0.0 , fb = 0.0;
+	float fc= 0.0 , fd = 0.0, golden_ratio = (sqrt(5.0)-1.0)*0.5;
 	float c = b-golden_ratio*(b-a);
 	float d = a+golden_ratio*(b-a);
+	float k = 1E-20, m=1.0;
+	float a0=a;
 
 	std::cout << "GOLDEN RATIO SEARCH::";
 
 	if ( true ) {
-		while( d-c > TOL ){
-			fc			= calc_kurtosis( sharpen ( c, original_fphis ), 0 );
-			fd			= calc_kurtosis( sharpen ( d, original_fphis ), 0 );
+		fa	= calc_kurtosis( sharpen ( a, original_fphis ), 0 );
+        	fb	= calc_kurtosis( sharpen ( b, original_fphis ), 0 );
+        	k = (fb-fa)/(b-a);
+        	m = fa;
+		while( d-c > TOL ) {
+			fc		= calc_kurtosis( sharpen ( c, original_fphis ), 0 );
+			fd		= calc_kurtosis( sharpen ( d, original_fphis ), 0 );
+			if(d-c>TOLB) {
+				fc	/= (k*(c-a0)+m);
+				fd	/= (k*(d-a0)+m);
+			}
 			if( fc > fd ) { // FIND MAXIMUM
 				b = d; d = c;
 				c = b - golden_ratio*( b - a );
@@ -612,37 +876,146 @@ float optimal_B_kurtosis( clipper::HKL_data< clipper::datatypes::F_phi<float> > 
 				a = c; c = d;
 				d = a + golden_ratio*( b - a );
 			}
-			std::cout << "*";
 		}
 		B_optimal = (c+d)*0.5;
 	}
-
-	std::cout << "FINISHED"<<std::endl;
-
 	return B_optimal;
 }
 
-int main (int argc, char **argv) {
+float optimal_B_skewness( clipper::HKL_data< clipper::datatypes::F_phi<float> > original_fphis ) {
+// 
+// CALCULATES THE OPTIMAL BFACTOR:
+// PERFORMS A GOLDEN RATIO SEARCH ON
+// THE KURTOSIS OF THE ENTIRE SUPPLIED MAP
+// 
+	float sharpening_limit = 100;	
+	float kurtosis=0.0, B_optimal=0.0;
+	float a =-1.0*sharpening_limit, b=1.0*sharpening_limit, TOL=1E-2, TOLB=40E0;
+	float fa= 0.0 , fb = 0.0;
+	float fc= 0.0 , fd = 0.0, golden_ratio = (sqrt(5.0)-1.0)*0.5;
+	float c = b-golden_ratio*(b-a);
+	float d = a+golden_ratio*(b-a);
+	float k = 1E-20, m=1.0;
+	float a0=a;
 
-	std::string filename[3];
-	clipper::HKL_info myhkl;
+	std::cout << "GOLDEN RATIO SEARCH::";
+
+	if ( true ) {
+		fa	= calc_skewness( sharpen ( a, original_fphis ), 0 );
+        	fb	= calc_skewness( sharpen ( b, original_fphis ), 0 );
+        	k	= (fb-fa)/(b-a);
+        	m	=  fa;
+		while( d-c > TOL ) {
+			fc		= calc_skewness( sharpen ( c, original_fphis ), 0 );
+			fd		= calc_skewness( sharpen ( d, original_fphis ), 0 );
+			if( d-c>TOLB ) {
+				fc	/= (k*(c-a0)+m);
+				fd	/= (k*(d-a0)+m);
+			}
+			if( fc > fd ) { // FIND MAXIMUM
+				b = d; d = c;
+				c = b - golden_ratio*( b - a );
+			} else {
+				a = c; c = d;
+				d = a + golden_ratio*( b - a );
+			}
+		}
+		B_optimal = (c+d)*0.5;
+	}
+	return B_optimal;
+}
+
+
+float optimal_B_std_moment( clipper::HKL_data< clipper::datatypes::F_phi<float> > original_fphis , int imom ) {
+// 
+// CALCULATES THE OPTIMAL BFACTOR:
+// PERFORMS A GOLDEN RATIO SEARCH ON
+// THE KURTOSIS OF THE ENTIRE SUPPLIED MAP
+// 
+	float sharpening_limit = 100;	
+	float kurtosis=0.0, B_optimal=0.0;
+	float a =-1.0*sharpening_limit, b=1.0*sharpening_limit, TOL=1E-2, TOLB=40E0;
+	float fa= 0.0 , fb = 0.0;
+	float fc= 0.0 , fd = 0.0, golden_ratio = (sqrt(5.0)-1.0)*0.5;
+	float c = b-golden_ratio*(b-a);
+	float d = a+golden_ratio*(b-a);
+	float k = 1E-20, m=1.0;
+	float a0=a;
+
+	std::cout << "GOLDEN RATIO SEARCH::";
+
+	if ( true ) {
+		fa	= calc_standardized_moment( sharpen ( a, original_fphis ), imom, 0 );
+        	fb	= calc_standardized_moment( sharpen ( b, original_fphis ), imom, 0 );
+        	k = (fb-fa)/(b-a);
+        	m = fa;
+		while( d-c > TOL ) {
+			fc		= calc_standardized_moment( sharpen ( c, original_fphis ), imom , 0 );
+			fd		= calc_standardized_moment( sharpen ( d, original_fphis ), imom , 0 );
+			if(d-c>TOLB) {
+				fc	/= (k*(c-a0)+m);
+				fd	/= (k*(d-a0)+m);
+			}
+			if( fc > fd ) { // FIND MAXIMUM
+				b = d; d = c;
+				c = b - golden_ratio*( b - a );
+			} else {
+				a = c; c = d;
+				d = a + golden_ratio*( b - a );
+			}
+		}
+		B_optimal = (c+d)*0.5;
+	}
+	return B_optimal;
+}
+
+void scale_xmap( clipper::Xmap<float>& xmap , float scalef ) {
+	for( clipper::Xmap<float>::Map_reference_index midx = xmap.first(); !midx.last(); midx.next() ) {
+		float x		= xmap[midx];					// THE VALUE
+		xmap[midx]	= x * scalef;
+	}
+}
+
+int main (int argc, char **argv) {
+	std::string 		filename[3];
+	clipper::HKL_info 	myhkl;
 	clipper::HKL_data< clipper::datatypes::F_phi<float> > fphidata;
-	clipper::CCP4MTZfile mtzin;
-	clipper::MTZcrystal  xtal;
-	std::string ext("mtz");
-	std::string fphi_str;
+	clipper::CCP4MTZfile 	mtzin;
+	clipper::MTZcrystal  	xtal;
+	std::string 		ext("mtz");
+	std::string 		fphi_str;
 	int is_mtz_file = 0, verbose = 1, write_mtz = 0;
+
+	double sigma3d	= 5.0;
+	double sigma1d	= 1.0;
+	std::string cols;
+	std::string::size_type sz;
 
 //	ALL ARG PARSING IS DONE HERE
 //	CURRENTLY SIMPLE
 	switch( argc ) {
-		case 2:{
+		case 5: {			
+			sigma1d = atof(argv[4]);
+			if(verbose)
+				std::cout << " \t\tS1=" << sigma1d << std::endl;
+		}
+		case 4: {
+			sigma3d = atof(argv[3]);
+			if(argc<5)
+				sigma1d = sigma3d;
+			if(verbose)
+				std::cout << " \t\tS3=" << sigma3d << std::endl;
+		}
+		case 3: {
+			std::string tmpline( argv[2] );
+			cols = tmpline;
+		}
+		case 2: {
 			std::string tmpline( argv[1] );
 			filename[0] = tmpline;
 			std::size_t found = tmpline.find(ext);
 			if (found!=std::string::npos){
 				std::cout << "INFO:: FOUND MTZ INPUT NAME" << std::endl;
-
 				try { 
 					mtzin.open_read( filename[0] );	
 					is_mtz_file = 1;
@@ -654,8 +1027,13 @@ int main (int argc, char **argv) {
 
 	    			std::string label;
 	    			std::string type;
+				std::string mtypF("F"),mtypP("P");
+				std::string mlab("WT");
+				std::string selection("/[");
+				std::string base_str;
 
 				if (is_mtz_file) { 
+					int nHit=0;
 					mtzin.set_column_label_mode( clipper::CCP4MTZfile::Legacy );
 					std::vector<clipper::String> v = mtzin.column_labels();
 					if (v.size() > 1) { 
@@ -670,7 +1048,15 @@ int main (int argc, char **argv) {
 							} else {
 								label = v[i].substr(0, ispace);
 								type  = v[i].substr(ispace+1);
-								if(verbose==2){
+								std::size_t found = label.find(mlab);
+								if(found!=std::string::npos && nHit < 2) {
+									nHit++;
+									base_str 	 = SplitString(label,"\\/",0);
+									std::string toplabel_str = SplitString(label,"\\/",1);
+									selection	+= toplabel_str;
+									selection	+= (nHit==1)?(","):("]");
+								}
+								if(verbose==2) {
 									std::cout << "Got label :" << label 
 									<< ": and type :" << type << ":\n";
 									SplitFilename (label);	
@@ -680,14 +1066,15 @@ int main (int argc, char **argv) {
 					}
 				}
 //			HERE WE RETRIEVE DATA
-				std::string base_str = SplitString(label,"\\/",0);
-//				fphi_str=base_str+"/[DELFWT,PHDELWT]";
-				fphi_str=base_str+"/[FWT,PHWT]";
+				fphi_str=base_str+selection;
+				if(argc>2)
+					fphi_str = cols;
+
 				if(verbose)
 					std::cout << "INFO:: WILL GET DATA FROM: " << fphi_str << std::endl;
 				mtzin.import_hkl_info( myhkl );	
-				mtzin.import_crystal ( xtal, fphi_str  );	// CHECK THIS
-  				mtzin.import_hkl_data( fphidata, fphi_str );
+				mtzin.import_crystal ( xtal	, fphi_str );	// CHECK THIS
+  				mtzin.import_hkl_data( fphidata	, fphi_str );
 				mtzin.close_read();
 				if(verbose){
 					int n_reflections = fphidata.num_obs();
@@ -704,7 +1091,8 @@ int main (int argc, char **argv) {
 			}
 			break;
 	}
-
+	if(verbose)
+		std::cout << "INPUT[I]::" << filename[0] << " " << fphi_str << " " << sigma3d << " " << sigma1d << std::endl;
 ////	DEBUG
 	if( verbose == 2 ) {
 		std::cout << "INFO:: MTZ:: DEBUG::    (M)YHKL:: " << myhkl.spacegroup().symbol_hm() << " " 
@@ -733,96 +1121,83 @@ int main (int argc, char **argv) {
 		std::cout << "INFO:: GRID SAMPLING (FP): " << gs.format()	<< std::endl; 
 		std::cout << "INFO:: GRID SAMPLING (M):: " << gshkl.format()	<< std::endl; 
 	}
-	clipper::Xmap<float> xmap,xmap_q;	  				// NULL MAP
+	clipper::Xmap<float> xmap,xmap_q,xmap_p,xmap_s,xmap_m;	  	// NULL MAP
 	xmap.init	( fphidata.spacegroup(), fphidata.cell(), gs); 	// INITIALIZE MAP
 	xmap_q.init	( fphidata.spacegroup(), fphidata.cell(), gs); 	// INITIALIZE MAP
+	xmap_p.init	( fphidata.spacegroup(), fphidata.cell(), gs); 	// INITIALIZE MAP
+	xmap_m.init	( fphidata.spacegroup(), fphidata.cell(), gs); 	// INITIALIZE MAP
+
+	int smom	= 1;
+	int nmom	= 3;
+	std::vector< clipper::Xmap<float> > xmom;
+	for (int imom=0;imom<nmom;imom++){
+		clipper::Xmap<float> xmo;
+		xmo.init(fphidata.spacegroup(), fphidata.cell(), gs);
+		xmom.push_back(xmo);
+	}
 ////	DO FFT
 	if(verbose)
 		std::cout << "FFT :: BEGUN" << std::endl;
-	xmap.fft_from( fphidata );
-	if(verbose)                  						// GET ERROR FROM CLIPPER
+	xmap.fft_from( fphidata );	
+	if(verbose)                  			 	// GET ERROR FROM CLIPPER
 		std::cout << "FFT :: ENDED" << std::endl;
+	float fnorm	= 0.0;
+	float fnorm0	= 0.0;
+	std::pair<float,float> mean_std0, mean_std1, mean_std2;
 
-	float sum0 = sum_map( xmap , 1);
-	std::pair<float,float> mv0 = map_mean_variance( xmap , true );
-	std::cout << "::::MV0::::" << mv0.first << "\t" << mv0.second << std::endl;
-	std::cout << "::::QUENCHING MAP::::"<< std::endl;
-	xmap = quench_map_with_cdf( xmap );
-	int Nbins 	=	11;
-	float map_norm	=	00.0;
-	float b_shift	=	optimal_B_kurtosis( fphidata  );		// find optimal bsharp here
-	float	ds	=	00.0;
-	std::cout << "INTEGRATING DENSITY::";
-	for( int i=0; i<Nbins; i++ ) {
-		clipper::Xmap<float>  xmap_s;
-		float dBs	 = 0.5;
-		float Bs	 = (	((float)i) - ((float)Nbins)*0.5		)*dBs + b_shift;
-		xmap_s		 = sharpen		( Bs	 , fphidata 	);
-		float kurt	 = calc_kurtosis	( xmap_s , 0		);
-		xmap_s		 = calc_map_scale	( xmap_s , kurt		);
-		map_norm	+= kurt;
-		xmap		+= xmap_s;
-		std::cout << "#";
-	}
-	std::cout << "FINISHED INTEGRATION" << std::endl;
-	float imn	= 1.0/map_norm;
-	xmap		= calc_map_scale	( xmap , imn	);
-	std::cout << "::::QUENCHING MAP::::"<< std::endl;
-	xmap		= quench_map_with_cdf( xmap );
+	xmap_m += xmap;
+	mean_std0 = map_mean_variance(xmap,0);
 
-	std::pair<float,float> mv1 = map_mean_variance( xmap , true );
-	std::cout << "::::MV1::::" << mv1.first << "\t" << mv1.second << std::endl;
-	float scf	= (mv0.second/mv1.second);
-	xmap		= calc_map_scale	( xmap , scf );
-
-//	MAP STATS
-	std::vector<float > lims = calc_map_extreme( xmap );
-	std::vector<std::pair<float, float[2] > > stats0, stats_ideal, new_stats;
-	stats0		= calc_cdf( xmap , lims );
-
-	filename[0].replace(filename[0].find("mtz"),3,"dat");
-	std::string base_str = SplitString(filename[0],".",0);
-	output_stats(stats0,filename[0]);	
-
-// ADDED RANDOM BLUR JUST FOR THE HELL OF IT
-//	xmap = random_blur_map( xmap );
-////	NAMES ETC
-
-	filename[1]=base_str + "_out.map";
-	std::cout << "INFO:: OUTPUT TO:: "<< filename[1] << std::endl;
-	float frad=1.0;
-
-//
-//	xmap = histogram_equalisation( xmap , stats0 );
-//
-	if( verbose == 2 ) {
-		//// FLUSH ALL DATA
-  		std::ofstream ofs;
-  		ofs.open("flushed_intensities.dat");
-		std::cout << "INFO:: FLUSHING DATA" << std::endl;
-		for(clipper::Xmap<float>::Map_reference_index midx = xmap.first(); !midx.last(); midx.next() ) {
-			ofs << xmap[midx] << std::endl;
+	fnorm0 = sum_map( xmap_m , 0 ); 
+	if( sigma1d>0.0 && sigma3d>0.0 ) {
+		xmap_q = degaus(xmap, sigma3d, sigma1d , false );
+	} else {
+		float bopt_k	= optimal_B_kurtosis( fphidata );
+		xmap_q		= sharpen ( bopt_k ,  fphidata );
+		float bopt_s	= optimal_B_skewness( fphidata );
+		//xmap_p		= sharpen ( bopt_s ,  fphidata );
+		std::cout << "\n INFO [ " << bopt_s << " \t " << bopt_k << " ] " << std::endl;
+		float bopt[nmom];
+		std::cout	<< " SMOM [ " ;
+		for( int imom=smom; imom<nmom; imom++ ) {
+			bopt[imom]	= optimal_B_std_moment( fphidata, imom );
+			xmom[imom]	= sharpen ( bopt[imom], fphidata );
+			if( 1 ) { 
+				xmap_m	+=  xmom[imom]; 
+			}
+			std::cout << " \t " << imom << " " << bopt[imom] << "\n";
 		}
-		ofs.close();
+		std::cout << " ]" <<std::endl;
 	}
+	fnorm = sum_map( xmap_m , 0 ); 
+	float norm=(float)nmom;
+	mean_std1=map_mean_variance(xmap_m,0);
 	
+	// RENORMALIZATION
+	scale_xmap( xmap_m , mean_std0.second/mean_std1.second );
+	mean_std2 = map_mean_variance(xmap_m,0);
+	xmap_p = degaus(xmap, 5.0 , mean_std2.second , false );
+
+	std::string base_str = SplitString(filename[0],".",0);
+
 ////	FILE IO
 	clipper::CCP4MAPfile mapout;
-	clipper::CCP4MTZfile mtzout;
-	filename[1]=base_str + "_quenched_out.map";
+	filename[1]=base_str + "_bk.map";
 	mapout.open_write	( filename[1] 	);
-	mapout.export_xmap	( xmap );
-	mapout.close_write	(	);
-	filename[1]=base_str + "_quenched_out.mtz";
-/*
-	mtzout.open_write	( filename[1] 	);
-	xmap.fft_to( fphidata );
-	mtzout.export_crystal ( xtal, fphi_str  );
-	mtzout.export_hkl_info	( myhkl );
-	std::cout << "INFO::WRITING MTZ::   " << fphi_str << std::endl;
-	//mtzout.export_hkl_info	( myhkl );
-	mtzout.export_hkl_data	( fphidata, fphi_str );
-	mtzout.close_write	(	);
-*/
+	mapout.export_xmap	( xmap_q );	
+	mapout.close_write	(	 );	
+
+	if( !( sigma1d>0.0 && sigma3d>0.0 ) ) {
+		filename[1]=base_str + "_bs.map";
+		mapout.open_write	( filename[1] 	);
+		mapout.export_xmap	( xmap_p );	
+		mapout.close_write	(	 );	
+
+		filename[1]=base_str + "_ms.map";
+		mapout.open_write	( filename[1] 	);
+		mapout.export_xmap	( xmap_m );	
+		mapout.close_write	(	 );
+	}
+
 	return 0;
 }
